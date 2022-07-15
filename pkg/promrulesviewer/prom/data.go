@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-func fetchPromRules(promAddress string) (*v1.RulesResult, error) {
+func FetchPromRules(promAddress string) (*v1.RulesResult, error) {
 	client, err := api.NewClient(api.Config{
 		// Address: "https://prometheus.demo.do.prometheus.io/rules",
 		Address: promAddress,
@@ -55,40 +54,30 @@ func extractQueryMatchers(query string) []string {
 	return result
 }
 
-func Transform() map[string][]string {
-	client, err := api.NewClient(api.Config{
-		Address: "https://prometheus.demo.do.prometheus.io/rules",
-	})
-
-	if err != nil {
-		fmt.Printf("Error creating client: %v\n", err)
-		os.Exit(1)
-	}
-
-	v1api := v1.NewAPI(client)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	rules, _ := v1api.Rules(ctx)
-
-	// need to add group name as metrics can repeat in different groups
-	ruleNameWithRelatedQueryNames := map[string][]string{}
+// IndexByRule indexes the raw rules result by rules and associated expressions
+func IndexByDirectExprAssociation(rules *v1.RulesResult) (RulesWithAssociatedExpressions, error) {
+	rulesWithAssociatedExpressions := RulesWithAssociatedExpressions{}
 
 	for _, group := range rules.Groups {
-		// groupName := group.Name
 		for _, r := range group.Rules {
+			var associatedExpressions []string
+
 			switch v := r.(type) {
 			case v1.RecordingRule:
-				rule := r.(v1.RecordingRule)
-				ruleNameWithRelatedQueryNames[rule.Name] = extractQueryMatchers(rule.Query)
+				associatedExpressions = extractQueryMatchers(r.(v1.RecordingRule).Query)
 			case v1.AlertingRule:
-				rule := r.(v1.AlertingRule)
-				ruleNameWithRelatedQueryNames[rule.Name] = extractQueryMatchers(rule.Query)
+				associatedExpressions = extractQueryMatchers(r.(v1.AlertingRule).Query)
 			default:
 				fmt.Printf("unknown rule type %s", v)
+				return nil, fmt.Errorf("unknown rule type %s", v)
 			}
+
+			rulesWithAssociatedExpressions[&RuleAndGroup{
+				Rule:  r,
+				Group: group,
+			}] = associatedExpressions
 		}
 	}
 
-	return ruleNameWithRelatedQueryNames
+	return rulesWithAssociatedExpressions, nil
 }
